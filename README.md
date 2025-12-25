@@ -1,4 +1,8 @@
-# Spellify
+<p align="center">
+  <img src="logo.png" width="128" height="128" alt="Spellify">
+</p>
+
+<h1 align="center">Spellify</h1>
 
 Менюбар-утилита для macOS. Выделяешь текст, жмёшь хоткей — получаешь исправленную версию. Под капотом Gemini API.
 
