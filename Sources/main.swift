@@ -289,8 +289,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         keyDown?.post(tap: .cghidEventTap)
                         keyUp?.post(tap: .cghidEventTap)
                         
-                    case .failure:
-                        break
+                    case .failure(let error):
+                        self?.showNotification(title: "Ошибка", message: error.localizedDescription)
                     }
                 }
             }
@@ -303,7 +303,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
+        request.timeoutInterval = 30
         
         let prompt = "Исправь орфографические и пунктуационные ошибки. Верни ТОЛЬКО исправленный текст:\n\n\(text)"
         let body: [String: Any] = [
@@ -312,18 +312,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
-        URLSession.shared.dataTask(with: request) { data, _, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
-                completion(.failure(error))
+                completion(.failure(NSError(domain: "Spellify", code: -1, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription])))
                 return
             }
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 429 {
+                    completion(.failure(NSError(domain: "Spellify", code: 429, userInfo: [NSLocalizedDescriptionKey: "Лимит запросов исчерпан. Подожди минуту."])))
+                    return
+                }
+                if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                    completion(.failure(NSError(domain: "Spellify", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Неверный API ключ"])))
+                    return
+                }
+            }
+            
             guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let candidates = json["candidates"] as? [[String: Any]],
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(.failure(NSError(domain: "Spellify", code: -1, userInfo: [NSLocalizedDescriptionKey: "Ошибка парсинга ответа"])))
+                return
+            }
+            
+            if let error = json["error"] as? [String: Any], let message = error["message"] as? String {
+                completion(.failure(NSError(domain: "Spellify", code: -1, userInfo: [NSLocalizedDescriptionKey: message])))
+                return
+            }
+            
+            guard let candidates = json["candidates"] as? [[String: Any]],
                   let content = candidates.first?["content"] as? [String: Any],
                   let parts = content["parts"] as? [[String: Any]],
                   let text = parts.first?["text"] as? String else {
-                completion(.failure(NSError(domain: "", code: -1)))
+                completion(.failure(NSError(domain: "Spellify", code: -1, userInfo: [NSLocalizedDescriptionKey: "Неожиданный формат ответа"])))
                 return
             }
             completion(.success(text.trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -331,6 +352,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @objc func quit() { NSApp.terminate(nil) }
+    
+    func showNotification(title: String, message: String) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = message
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
+    }
 }
 
 let app = NSApplication.shared
